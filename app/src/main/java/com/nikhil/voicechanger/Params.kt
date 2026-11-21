@@ -27,6 +27,7 @@ object Params {
     @Volatile var overlay = false
     @Volatile var effectOn = true
     @Volatile var outputDeviceId = -1
+    @Volatile var inputDeviceId = -1
 
     fun ratio(): Float = 2.0.pow(semitones / 12.0).toFloat()
 
@@ -41,6 +42,7 @@ object Params {
         noiseSuppress = p.getBoolean("ns", true)
         overlay = p.getBoolean("overlay", false)
         outputDeviceId = p.getInt("dev", -1)
+        inputDeviceId = p.getInt("indev", -1)
     }
 
     fun save(c: Context) {
@@ -54,6 +56,7 @@ object Params {
             .putBoolean("ns", noiseSuppress)
             .putBoolean("overlay", overlay)
             .putInt("dev", outputDeviceId)
+            .putInt("indev", inputDeviceId)
             .apply()
     }
 }

@@ -178,6 +178,7 @@ class VoiceService : Service() {
             fail("Mic busy. Close other apps using mic")
             return
         }
+        audioDevice(this, Params.inputDeviceId, AudioManager.GET_DEVICES_INPUTS)?.let { rec.setPreferredDevice(it) }
         var ns: NoiseSuppressor? = null
         if (Params.noiseSuppress && NoiseSuppressor.isAvailable()) {
             try {

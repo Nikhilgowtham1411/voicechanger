@@ -55,6 +55,17 @@ class MainActivity : Activity() {
     private lateinit var outTv: TextView
     private lateinit var devSp: Spinner
     private var deviceIds: List<Int> = listOf(-1)
+    private var inIds: List<Int> = listOf(-1)
+    private lateinit var micSp: Spinner
+    private val recorder by lazy { VoiceRecorder(this) }
+    private var rawPcm: ShortArray? = null
+    private var procPcm: ShortArray? = null
+    private var recRate = 16000
+    private lateinit var recBtn: Button
+    private lateinit var playBtn: Button
+    private lateinit var origBtn: Button
+    private lateinit var shareBtn: Button
+    private lateinit var recStatus: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -153,6 +164,28 @@ class MainActivity : Activity() {
         pc.addView(statusTv, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
         root.addView(pc)
 
+        // voice note recorder
+        val rc = cardBox()
+        rc.addView(text("Voice note (WhatsApp)", 16f, Color.WHITE, true))
+        rc.addView(text("Record chey, marchina voice mundu vinu, tarvata WhatsApp ki share chey. (Live Stop lo undali)", 12f, dim))
+        recBtn = Button(this)
+        recBtn.isAllCaps = false
+        recBtn.setTextColor(Color.WHITE)
+        recBtn.setOnClickListener { onRecordClick() }
+        rc.addView(recBtn, LinearLayout.LayoutParams(-1, dp(50)).also { it.topMargin = dp(8) })
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        playBtn = smallBtn("Play changed") { playClip(true) }
+        origBtn = smallBtn("Play original") { playClip(false) }
+        row.addView(playBtn, LinearLayout.LayoutParams(0, dp(46), 1f).also { it.rightMargin = dp(6) })
+        row.addView(origBtn, LinearLayout.LayoutParams(0, dp(46), 1f).also { it.leftMargin = dp(6) })
+        rc.addView(row, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
+        shareBtn = smallBtn("Share to WhatsApp / other apps") { shareClip() }
+        rc.addView(shareBtn, LinearLayout.LayoutParams(-1, dp(46)).also { it.topMargin = dp(8) })
+        recStatus = text("", 12f, dim)
+        rc.addView(recStatus)
+        root.addView(rc)
+
         // voice
         val vc = cardBox()
         vc.addView(text("Voice", 16f, Color.WHITE, true))
@@ -204,6 +237,17 @@ class MainActivity : Activity() {
 
         // output
         val oc = cardBox()
+        oc.addView(text("Mic", 16f, Color.WHITE, true))
+        micSp = Spinner(this)
+        micSp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                if (updating) return
+                Params.inputDeviceId = inIds.getOrElse(pos) { -1 }
+                Params.save(this@MainActivity)
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        oc.addView(micSp)
         oc.addView(text("Voice output to", 16f, Color.WHITE, true))
         devSp = Spinner(this)
         devSp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -220,13 +264,13 @@ class MainActivity : Activity() {
 
         // help
         val hc = cardBox()
-        hc.addView(text("BGMI lo ela vadali", 16f, Color.WHITE, true))
+        hc.addView(text("Ela vadali", 16f, Color.WHITE, true))
         hc.addView(
             text(
-                "Test: earphones pettuko, Start nokku, matladu - nee female voice vinipistundi.\n\n" +
-                "Game lo vinipinchadaniki: Android lo oka app marokka app mic ki direct ga voice ivvaledu. " +
-                "So ee app ni 2nd phone / device lo run chesi, daani audio output (cable / Bluetooth) ni " +
-                "BGMI phone mic input ki connect cheyyali. Same phone speaker nundi mic ki pettite nee asali voice kuda vellipotundi.",
+                "Live: earphones lagao > Start > matladu. Nee marchina voice earphones lo vinipistundi.\n\n" +
+                "Voice note: Record > matladu > Stop > Play changed tho vinu (Play original tho compare) > Share to WhatsApp.\n\n" +
+                "Voice tho nachakapote Pitch / Female tone sliders adjust chey.\n\n" +
+                "Note: BGMI / call lo real-time ga direct work avvadu (Android limit). Voice note ki clear ga work avtundi.",
                 13f, dim
             )
         )
@@ -246,6 +290,8 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        recorder.stop()
+        recorder.stopPlay()
         ui.removeCallbacks(ticker)
         Params.save(this)
         super.onPause()
@@ -303,6 +349,27 @@ class MainActivity : Activity() {
         updating = true
         devSp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
         devSp.setSelection(ids.indexOf(Params.outputDeviceId).let { if (it < 0) 0 else it })
+
+        val inNames = ArrayList<String>()
+        val inList = ArrayList<Int>()
+        inNames.add("Auto (earphone mic if plugged)")
+        inList.add(-1)
+        for (d in am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            val label = when (d.type) {
+                AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Phone mic"
+                AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Earphone mic (wired)"
+                AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE -> "USB mic"
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth mic"
+                else -> null
+            }
+            if (label != null) {
+                inNames.add(label)
+                inList.add(d.id)
+            }
+        }
+        inIds = inList
+        micSp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, inNames)
+        micSp.setSelection(inList.indexOf(Params.inputDeviceId).let { if (it < 0) 0 else it })
         updating = false
     }
 
@@ -319,6 +386,96 @@ class MainActivity : Activity() {
             else -> "Stopped"
         }
         statusTv.setTextColor(if (run) Color.parseColor("#6EE7A8") else dim)
+
+        val rec = recorder.recording
+        val has = procPcm != null && !rec
+        recBtn.text = if (rec) "Stop recording" else "Record voice note"
+        recBtn.background = rounded(if (rec) Color.parseColor("#C0392B") else accent, 25)
+        val pl = recorder.playing
+        playBtn.text = if (pl) "Stop" else "Play changed"
+        origBtn.text = if (pl) "Stop" else "Play original"
+        for (b in listOf(playBtn, origBtn, shareBtn)) {
+            b.isEnabled = has
+            b.alpha = if (has) 1f else 0.4f
+        }
+    }
+
+    private fun smallBtn(label: String, click: () -> Unit): Button {
+        val b = Button(this)
+        b.text = label
+        b.isAllCaps = false
+        b.textSize = 13f
+        b.setTextColor(Color.WHITE)
+        b.background = rounded(Color.parseColor("#2F2640"), 23)
+        b.setOnClickListener { click() }
+        return b
+    }
+
+    private fun onRecordClick() {
+        if (recorder.recording) {
+            recorder.stop()
+            return
+        }
+        if (VoiceService.running) {
+            Toast.makeText(this, "Mundu live Stop cheyyi", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 2)
+            return
+        }
+        recorder.stopPlay()
+        Params.save(this)
+        recStatus.text = "Recording... matladu"
+        recorder.start({ raw, proc, rate ->
+            runOnUiThread {
+                rawPcm = raw
+                procPcm = proc
+                recRate = rate
+                recStatus.text = String.format(Locale.US, "Recorded %.1f sec. Play chesi vinu", proc.size / rate.toFloat())
+                refresh()
+            }
+        }, { msg ->
+            runOnUiThread {
+                recStatus.text = msg
+                refresh()
+            }
+        })
+        refresh()
+    }
+
+    private fun playClip(changed: Boolean) {
+        if (recorder.playing) {
+            recorder.stopPlay()
+            return
+        }
+        val pcm = (if (changed) procPcm else rawPcm) ?: return
+        recorder.play(pcm, recRate) { runOnUiThread { refresh() } }
+        refresh()
+    }
+
+    private fun shareClip() {
+        val pcm = procPcm ?: return
+        if (Build.VERSION.SDK_INT < 29) {
+            Toast.makeText(this, "Android 10+ kavali", Toast.LENGTH_LONG).show()
+            return
+        }
+        recStatus.text = "Preparing file..."
+        Thread {
+            val uri = recorder.saveM4a(pcm, recRate)
+            runOnUiThread {
+                if (uri == null) {
+                    recStatus.text = "Save fail ayyindi"
+                } else {
+                    recStatus.text = "Saved in Music/VoiceChanger"
+                    val i = Intent(Intent.ACTION_SEND)
+                    i.type = "audio/mp4"
+                    i.putExtra(Intent.EXTRA_STREAM, uri)
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    startActivity(Intent.createChooser(i, "Voice note share"))
+                }
+            }
+        }.start()
     }
 
     private fun togglePower() {
@@ -346,7 +503,8 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            startVoice()
+            if (requestCode == 1) startVoice()
+            else Toast.makeText(this, "Permission ichav, malli Record nokku", Toast.LENGTH_LONG).show()
         } else {
             Toast.makeText(this, "Mic permission kavali", Toast.LENGTH_LONG).show()
         }
