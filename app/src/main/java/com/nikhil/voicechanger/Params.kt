@@ -28,6 +28,7 @@ object Params {
     @Volatile var effectOn = true
     @Volatile var outputDeviceId = -1
     @Volatile var inputDeviceId = -1
+    @Volatile var forceSpeaker = true
 
     fun ratio(): Float = 2.0.pow(semitones / 12.0).toFloat()
 
@@ -43,6 +44,7 @@ object Params {
         overlay = p.getBoolean("overlay", false)
         outputDeviceId = p.getInt("dev", -1)
         inputDeviceId = p.getInt("indev", -1)
+        forceSpeaker = p.getBoolean("speaker", true)
     }
 
     fun save(c: Context) {
@@ -57,6 +59,7 @@ object Params {
             .putBoolean("overlay", overlay)
             .putInt("dev", outputDeviceId)
             .putInt("indev", inputDeviceId)
+            .putBoolean("speaker", forceSpeaker)
             .apply()
     }
 }
