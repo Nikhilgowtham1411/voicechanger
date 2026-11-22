@@ -66,6 +66,8 @@ class MainActivity : Activity() {
     private lateinit var origBtn: Button
     private lateinit var shareBtn: Button
     private lateinit var recStatus: TextView
+    private lateinit var sbFloatBtn: Button
+    private lateinit var sbList: LinearLayout
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -262,6 +264,25 @@ class MainActivity : Activity() {
         oc.addView(text("Change output, then press Stop and Start again.", 12f, dim))
         root.addView(oc)
 
+        // soundboard
+        val sc = cardBox()
+        sc.addView(text("Soundboard (nee audio clips)", 16f, Color.WHITE, true))
+        sc.addView(
+            text(
+                "Audio files add chey. Tap chesthe phone speaker lo play avtayi, BGMI mic aa sound ni pattukovachu " +
+                    "(acoustic ga veltundi, clear ga vinipinchakapovachu). Floating button tho game lo nunde tap cheyyochu.",
+                12f, dim
+            )
+        )
+        sc.addView(sw("Force loudspeaker (earphones pettukunna kuda)", Params.forceSpeaker) { Params.forceSpeaker = it; Params.save(this) })
+        sc.addView(smallBtn("Add audio files") { pickAudio() }, LinearLayout.LayoutParams(-1, dp(46)).also { it.topMargin = dp(8) })
+        sbFloatBtn = smallBtn("Start floating soundboard") { toggleSoundboard() }
+        sc.addView(sbFloatBtn, LinearLayout.LayoutParams(-1, dp(46)).also { it.topMargin = dp(8) })
+        sbList = LinearLayout(this)
+        sbList.orientation = LinearLayout.VERTICAL
+        sc.addView(sbList)
+        root.addView(sc)
+
         // help
         val hc = cardBox()
         hc.addView(text("Ela vadali", 16f, Color.WHITE, true))
@@ -279,6 +300,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
         syncSliders()
         loadDevices()
+        refreshSoundboard()
         refresh()
     }
 
@@ -387,6 +409,7 @@ class MainActivity : Activity() {
         }
         statusTv.setTextColor(if (run) Color.parseColor("#6EE7A8") else dim)
 
+        sbFloatBtn.text = if (SoundboardService.running) "Stop floating soundboard" else "Start floating soundboard"
         val rec = recorder.recording
         val has = procPcm != null && !rec
         recBtn.text = if (rec) "Stop recording" else "Record voice note"
@@ -508,6 +531,70 @@ class MainActivity : Activity() {
         } else {
             Toast.makeText(this, "Mic permission kavali", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun pickAudio() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "audio/*"
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        startActivityForResult(i, 5)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 5 || resultCode != RESULT_OK || data == null) return
+        val uris = ArrayList<Uri>()
+        data.clipData?.let { for (k in 0 until it.itemCount) uris.add(it.getItemAt(k).uri) }
+        data.data?.let { uris.add(it) }
+        Thread {
+            var n = 0
+            for (u in uris) if (Soundboard.importClip(this, u)) n++
+            runOnUiThread {
+                Toast.makeText(this, "$n clip(s) add ayyayi", Toast.LENGTH_SHORT).show()
+                refreshSoundboard()
+            }
+        }.start()
+    }
+
+    private fun refreshSoundboard() {
+        sbList.removeAllViews()
+        val clips = Soundboard.list(this)
+        if (clips.isEmpty()) {
+            sbList.addView(text("Clips inka ledu", 12f, dim))
+            return
+        }
+        sbList.addView(text("Tap = play, long press = delete", 12f, dim))
+        for (f in clips) {
+            val b = smallBtn(Soundboard.label(f)) { Soundboard.play(this, f) }
+            b.setOnLongClickListener {
+                Soundboard.stop()
+                f.delete()
+                refreshSoundboard()
+                true
+            }
+            sbList.addView(b, LinearLayout.LayoutParams(-1, dp(46)).also { it.topMargin = dp(6) })
+        }
+        val stopB = smallBtn("Stop sound") { Soundboard.stop() }
+        sbList.addView(stopB, LinearLayout.LayoutParams(-1, dp(46)).also { it.topMargin = dp(6) })
+    }
+
+    private fun toggleSoundboard() {
+        if (SoundboardService.running) {
+            startService(Intent(this, SoundboardService::class.java).setAction(SoundboardService.ACTION_STOP))
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Allow chesi malli nokku", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            return
+        }
+        if (Soundboard.list(this).isEmpty()) {
+            Toast.makeText(this, "Mundu audio files add chey", Toast.LENGTH_LONG).show()
+            return
+        }
+        startForegroundService(Intent(this, SoundboardService::class.java))
+        ui.postDelayed({ refresh() }, 300)
     }
 
     private fun onOverlayToggle(on: Boolean) {
